@@ -68,5 +68,46 @@ tickers = []
 
 if exchange == "NYSE (demo)":
     tickers = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL", "KO", "PEP"]
-elif exchange ==
+elif exchange == "Nasdaq Stockholm":
+    tickers = ["VOLV-B.ST", "ERIC-B.ST", "ATCO-A.ST", "SAND.ST"]
+elif exchange == "Oslo Børs":
+    tickers = ["EQNR.OL", "YAR.OL", "TEL.OL", "NHY.OL", "SALM.OL"]
+
+with st.spinner("🔍 Screener kjører..."):
+    results = []
+    for t in tickers:
+        res = screen_ticker(t, min_vol, min_swings, min_return_pct)
+        if res and res["success_rate"] >= min_success_rate:
+            results.append(res)
+
+# Vis resultater
+if results:
+    st.success(f"Fant {len(results)} aksjer som matcher kriteriene 🎯")
+    tickermap = {f"{r['ticker']} ({r['success_rate']}%)": r for r in results}
+    selected = st.selectbox("Velg aksje for å vise graf", list(tickermap.keys()))
+    st.markdown("**Oversikt:**")
+    st.dataframe(pd.DataFrame([{
+        "Ticker": r["ticker"],
+        "Svingninger": r["swings"],
+        "Suksessrate (%)": r["success_rate"],
+        "Snittavkastning (%)": r["avg_return"],
+    } for r in results]).sort_values(by="Suksessrate (%)", ascending=False))
+
+    # Tegn graf
+    df = tickermap[selected]["data"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Close", line=dict(color="blue")))
+    fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", yaxis="y2", line=dict(color="orange")))
+    fig.update_layout(
+        title=f"Pris og RSI for {selected}",
+        yaxis=dict(title="Pris"),
+        yaxis2=dict(title="RSI", overlaying="y", side="right"),
+        xaxis=dict(title="Dato"),
+        height=600,
+        showlegend=True,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+else:
+    st.warning("Ingen aksjer matcher kriteriene dine. Prøv å justere dem.")
 
