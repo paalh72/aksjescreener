@@ -1,102 +1,69 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import datetime
 
-# Konfigurasjon
-st.set_page_config(page_title="Aksjescreener", layout="wide")
-st.title("📈 RSI-baserte aksjesvingninger – Screener")
+# --- Funksjoner ---
+def fetch_data(ticker, start_date):
+    df = yf.download(ticker, start=start_date)
+    df['RSI'] = compute_rsi(df['Close'])
+    return df
 
-# RSI-beregning
-@st.cache_data
 def compute_rsi(series, period=14):
     delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# Screening-funksjon
-@st.cache_data(show_spinner=False)
-def screen_ticker(ticker, min_vol, min_swings, min_return_pct):
-    try:
-        df = yf.download(ticker, period="5y", interval="1d", auto_adjust=True, progress=False)
-        if df.empty or 'Volume' not in df.columns or df['Volume'].dropna().mean() < min_vol:
-            return None
+def screen_ticker(ticker, min_return_pct):
+    df = fetch_data(ticker, '2018-01-01')
+    swings = []
+    last_rsi20_date = None
 
-        df['RSI'] = compute_rsi(df['Close'])
-        swings = []
-        last_rsi20_date = None
+    for i in range(1, len(df)):
+        prev_rsi = df['RSI'].iloc[i - 1]
+        curr_rsi = df['RSI'].iloc[i]
 
-        for i in range(1, len(df)):
-            prev_rsi = df['RSI'].iloc[i - 1]
-            curr_rsi = df['RSI'].iloc[i]
-            if prev_rsi < 20 <= curr_rsi:
-                last_rsi20_date = df.index[i]
-            elif prev_rsi < 70 <= curr_rsi and last_rsi20_date:
-                if last_rsi20_date in df.index:
-                    start_price = df.loc[last_rsi20_date, 'Close']
-                    end_price = df['Close'].iloc[i]
-                    return_pct = (end_price - start_price) / start_price * 100
-                    if return_pct >= min_return_pct:
-                        swings.append((last_rsi20_date, df.index[i], return_pct))
-                last_rsi20_date = None
+        if prev_rsi < 20 and curr_rsi >= 20:
+            last_rsi20_date = df.index[i]
 
-        if len(swings) >= min_swings:
-            success_rate = len(swings) / (len(df) / 252)
-            return {
-                "ticker": ticker,
-                "swings": swings,
-                "success_rate": round(success_rate, 2),
-                "avg_return": round(np.mean([s[2] for s in swings]), 2)
-            }
-        return None
-    except Exception as e:
-        st.warning(f"Feil i {ticker}: {e}")
-        return None
+        if prev_rsi < 70 and curr_rsi >= 70 and last_rsi20_date:
+            start_price = df.loc[last_rsi20_date, 'Close'] if last_rsi20_date in df.index else None
+            end_price = df['Close'].iloc[i]
+            if start_price:
+                return_pct = (end_price - start_price) / start_price * 100
+                if return_pct >= min_return_pct:
+                    swings.append((last_rsi20_date, df.index[i], return_pct))
+            last_rsi20_date = None
 
-# Sidebar-filtere
-st.sidebar.header("🔧 Filterinnstillinger")
-min_vol = st.sidebar.number_input("Minimum gj.snittlig volum", value=50000)
-min_swings = st.sidebar.number_input("Min. antall svingmønstre", value=1)
-min_return_pct = st.sidebar.number_input("Min. avkastning per swing (%)", value=5.0)
+    df['Swings'] = swings
+    return df, swings
 
-# Liste over tickere (kan utvides)
-stocks = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "ORCL", "ADBE", "NFLX",
-    "NOK.OL", "DNB.OL", "TEL.OL", "YAR.OL", "EQNR.OL"
-]
+# --- Streamlit UI ---
+st.title("Aksje Screener")
 
-# Screening
-st.subheader("🔍 Screener-resultater")
-results = []
-with st.spinner("Analyserer aksjer..."):
-    for i, ticker in enumerate(stocks):
-        st.write(f"🔎 Sjekker {ticker} ({i + 1}/{len(stocks)})")
-        res = screen_ticker(ticker, min_vol, min_swings, min_return_pct)
-        if res:
-            results.append(res)
+tickers = st.text_input("Skriv inn tickere separert med komma (f.eks. AAPL, MSFT, EQNR.OL)", "AAPL, MSFT")
+min_return = st.number_input("Minimum avkastning mellom RSI 20 til RSI 70 (%)", value=10)
 
-if results:
-    df_results = pd.DataFrame([{k: v for k, v in r.items() if k != 'swings'} for r in results])
-    st.dataframe(df_results.sort_values("success_rate", ascending=False), use_container_width=True)
-else:
-    st.info("Ingen aksjer matchet kriteriene dine.")
+if st.button("Kjør screening"):
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    for ticker in ticker_list:
+        try:
+            st.subheader(f"Resultater for {ticker}")
+            df, swings = screen_ticker(ticker, min_return)
 
-# Manuell testing
-st.subheader("🔬 Test enkeltaksje manuelt")
-ticker_input = st.text_input("🎯 Skriv inn ticker for manuell RSI-visning", value="AAPL")
+            if swings:
+                st.success(f"Fant {len(swings)} gyldige svingninger")
+                st.write("Eksempel-data:", df[['Close', 'RSI']].dropna().tail(10))
 
-if st.button("Vis RSI-graf"):
-    df = yf.download(ticker_input, period="5y", interval="1d", auto_adjust=True)
-    if df.empty:
-        st.error("Ingen data funnet.")
-    else:
-        df['RSI'] = compute_rsi(df['Close'])
-        df_plot = df[['Close', 'RSI']].dropna().copy()
-        df_plot.index.name = "Date"
-        st.line_chart(df_plot)
+                chart_df = df[['Close', 'RSI']].dropna()
+                chart_df.index.name = 'Date'
+                chart_df.reset_index(inplace=True)
+                st.line_chart(chart_df.set_index('Date'))
+            else:
+                st.warning("Ingen treff som matchet kriteriene.")
 
+        except Exception as e:
+            st.error(f"Feil i {ticker}: {str(e)}")
