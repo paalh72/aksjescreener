@@ -18,7 +18,7 @@ def compute_rsi(series, window=14):
 # Screener-funksjon
 def screen_ticker(ticker, min_vol, min_swings, min_return_pct):
     df = yf.download(ticker, period="5y", interval="1d", auto_adjust=True)
-    if df.empty or df['Volume'].mean() < min_vol:
+    if df.empty or 'Volume' not in df.columns or df['Volume'].dropna().mean() < min_vol:
         return None
     df['RSI'] = compute_rsi(df['Close'])
     swings = []
