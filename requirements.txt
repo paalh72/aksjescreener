@@ -1,6 +1,5 @@
 streamlit
-yfinance
 pandas
+yfinance
+matplotlib
 numpy
-plotly
-stqdm
