@@ -128,32 +128,39 @@ if st.button("Test ticker"):
             st.write("Kolonner før rename:", list(chart_df_reset.columns))
 
             # Rename første kolonne til 'Date' hvis nødvendig
-            if chart_df_reset.columns[0] != 'Date':
-                chart_df_reset.rename(columns={chart_df_reset.columns[0]: 'Date'}, inplace=True)
+            chart_df_reset = chart_df.reset_index()
 
-            st.write("Kolonner etter rename:", list(chart_df_reset.columns))
+# Sjekk kolonnenavn etter reset_index
+st.write("Kolonner etter reset_index:", list(chart_df_reset.columns))
 
-            # Sjekk at Close og RSI finnes
-            missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
-            if missing_cols:
-                st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
-            else:
-                chart_df_melted = chart_df_reset.melt(
-                    id_vars='Date',
-                    value_vars=['Close', 'RSI'],
-                    var_name='Type',
-                    value_name='Value'
-                )
+# Sørg for at 'Date' eksisterer, hvis ikke sett navnet til index-kolonnen
+if 'Date' not in chart_df_reset.columns:
+    # Den første kolonnen er som regel datoen etter reset_index
+    old_name = chart_df_reset.columns[0]
+    chart_df_reset.rename(columns={old_name: 'Date'}, inplace=True)
+    st.write(f"Renamet kolonne '{old_name}' til 'Date'")
 
-                chart = alt.Chart(chart_df_melted).mark_line().encode(
-                    x='Date:T',
-                    y='Value:Q',
-                    color='Type:N'
-                ).properties(
-                    width=800,
-                    height=400,
-                    title=f"{ticker_input.upper()} – Close & RSI"
-                ).interactive()
+# Sjekk om 'Close' og 'RSI' finnes
+missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
+if missing_cols:
+    st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
+else:
+    # Nå kan vi trygt gjøre melt
+    chart_df_melted = chart_df_reset.melt(
+        id_vars='Date',
+        value_vars=['Close', 'RSI'],
+        var_name='Type',
+        value_name='Value'
+    )
 
-                st.altair_chart(chart, use_container_width=True)
+    chart = alt.Chart(chart_df_melted).mark_line().encode(
+        x='Date:T',
+        y='Value:Q',
+        color='Type:N'
+    ).properties(
+        width=800,
+        height=400,
+        title=f"{ticker_input.upper()} – Close & RSI"
+    ).interactive()
 
+    st.altair_chart(chart, use_container_width=True)
