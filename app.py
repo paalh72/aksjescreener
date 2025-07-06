@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import datetime
+import altair as alt 
 
 # RSI-beregning
 @st.cache_data
@@ -99,19 +100,38 @@ else:
 # Manuell testing
 st.subheader("🔬 Test enkeltaksje")
 ticker_input = st.text_input("🎯 Test ticker manuelt", "AAPL")
+
 if st.button("Test ticker"):
     df = yf.download(ticker_input, period="5y", interval="1d", auto_adjust=True)
     if df.empty:
         st.error("Ingen data funnet.")
     else:
         df['RSI'] = compute_rsi(df['Close'])
-        if 'RSI' in df.columns and 'Close' in df.columns:
-            chart_df = df[['Close', 'RSI']].dropna()
-            if not chart_df.empty:
-                st.line_chart(chart_df)
-            else:
-                st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
-        else:
-            st.warning("⚠️ RSI eller Close mangler i datasettet.")
+        chart_df = df[['Close', 'RSI']].dropna()
+        chart_df.index = pd.to_datetime(chart_df.index)
 
+        if chart_df.empty:
+            st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
+        else:
+            st.success("✅ Viser graf for 'Close' og 'RSI'")
+
+            # Valg: To separate grafer
+            st.line_chart(chart_df['Close'], height=200)
+            st.line_chart(chart_df['RSI'], height=200)
+
+            # Valg: Kombinert interaktiv graf (Altair)
+            chart_df_reset = chart_df.reset_index().rename(columns={"index": "Date"})
+            chart_df_melted = chart_df_reset.melt(id_vars='Date', value_vars=['Close', 'RSI'], var_name='Type', value_name='Value')
+
+            chart = alt.Chart(chart_df_melted).mark_line().encode(
+                x='Date:T',
+                y='Value:Q',
+                color='Type:N'
+            ).properties(
+                width=800,
+                height=400,
+                title=f"{ticker_input.upper()} – Close & RSI"
+            ).interactive()
+
+            st.altair_chart(chart, use_container_width=True)
 
