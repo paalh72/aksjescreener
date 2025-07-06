@@ -120,28 +120,38 @@ if st.button("Test ticker"):
             st.line_chart(chart_df['RSI'], height=200)
 
             # Kombinert interaktiv graf (Altair)
-            chart_df_reset = chart_df.reset_index()
-            chart_df_reset.columns = ['Date' if i == 0 else col for i, col in enumerate(chart_df_reset.columns)]
+           chart_df_reset = chart_df.reset_index()
 
-            chart_df_melted = chart_df_reset.melt(
-                id_vars='Date',
-                value_vars=['Close', 'RSI'],
-                var_name='Type',
-                value_name='Value'
-            )
+# Sjekk kolonnenavn før rename
+st.write("Kolonner før rename:", list(chart_df_reset.columns))
 
-            chart = alt.Chart(chart_df_melted).mark_line().encode(
-                x='Date:T',
-                y='Value:Q',
-                color='Type:N'
-            ).properties(
-                width=800,
-                height=400,
-                title=f"{ticker_input.upper()} – Close & RSI"
-            ).interactive()
+# Sett navn på første kolonne til 'Date' hvis den ikke allerede heter det
+if chart_df_reset.columns[0] != 'Date':
+    chart_df_reset.rename(columns={chart_df_reset.columns[0]: 'Date'}, inplace=True)
 
-            st.altair_chart(chart, use_container_width=True)
+st.write("Kolonner etter rename:", list(chart_df_reset.columns))
 
+# Dobbeltsjekk at 'Close' og 'RSI' finnes
+missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
+if missing_cols:
+    st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
+else:
+    chart_df_melted = chart_df_reset.melt(
+        id_vars='Date',
+        value_vars=['Close', 'RSI'],
+        var_name='Type',
+        value_name='Value'
+    )
 
-            st.altair_chart(chart, use_container_width=True)
+    # Lag Altair-grafen
+    chart = alt.Chart(chart_df_melted).mark_line().encode(
+        x='Date:T',
+        y='Value:Q',
+        color='Type:N'
+    ).properties(
+        width=800,
+        height=400,
+        title=f"{ticker_input.upper()} – Close & RSI"
+    ).interactive()
 
+    st.altair_chart(chart, use_container_width=True)
