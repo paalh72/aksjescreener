@@ -115,13 +115,20 @@ if st.button("Test ticker"):
         else:
             st.success("✅ Viser graf for 'Close' og 'RSI'")
 
-            # Valg: To separate grafer
+            # To separate grafer
             st.line_chart(chart_df['Close'], height=200)
             st.line_chart(chart_df['RSI'], height=200)
 
-            # Valg: Kombinert interaktiv graf (Altair)
-            chart_df_reset = chart_df.reset_index().rename(columns={"index": "Date"})
-            chart_df_melted = chart_df_reset.melt(id_vars='Date', value_vars=['Close', 'RSI'], var_name='Type', value_name='Value')
+            # Kombinert interaktiv graf (Altair)
+            chart_df_reset = chart_df.reset_index()
+            chart_df_reset.columns = ['Date' if i == 0 else col for i, col in enumerate(chart_df_reset.columns)]
+
+            chart_df_melted = chart_df_reset.melt(
+                id_vars='Date',
+                value_vars=['Close', 'RSI'],
+                var_name='Type',
+                value_name='Value'
+            )
 
             chart = alt.Chart(chart_df_melted).mark_line().encode(
                 x='Date:T',
@@ -132,6 +139,9 @@ if st.button("Test ticker"):
                 height=400,
                 title=f"{ticker_input.upper()} – Close & RSI"
             ).interactive()
+
+            st.altair_chart(chart, use_container_width=True)
+
 
             st.altair_chart(chart, use_container_width=True)
 
