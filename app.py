@@ -79,8 +79,10 @@ stocks = [
 ]
 
 results = []
-with st.spinner("🔍 Screener analyserer aksjer..."):
-    for t in [s.strip().upper() for s in stocks if s.strip()]:
+st.subheader("🔍 Screener kjører")
+with st.spinner("Analyserer aksjer, vennligst vent..."):
+    for i, t in enumerate([s.strip().upper() for s in stocks if s.strip()]):
+        st.write(f"▶️ Sjekker {t} ({i+1}/{len(stocks)})")
         res = screen_ticker(t, min_vol, min_swings, min_return_pct)
         if res:  # Fjernet success_rate-filter for debugging
             results.append(res)
@@ -95,13 +97,21 @@ else:
     st.info("Ingen aksjer matchet kriteriene dine.")
 
 # Manuell testing
-ticker_input = st.text_input("🎯 Test enkeltaksje", "AAPL")
+st.subheader("🔬 Test enkeltaksje")
+ticker_input = st.text_input("🎯 Test ticker manuelt", "AAPL")
 if st.button("Test ticker"):
     df = yf.download(ticker_input, period="5y", interval="1d", auto_adjust=True)
     if df.empty:
         st.error("Ingen data funnet.")
     else:
         df['RSI'] = compute_rsi(df['Close'])
-        st.line_chart(df[['Close', 'RSI']].dropna())
+        if 'RSI' in df.columns and 'Close' in df.columns:
+            chart_df = df[['Close', 'RSI']].dropna()
+            if not chart_df.empty:
+                st.line_chart(chart_df)
+            else:
+                st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
+        else:
+            st.warning("⚠️ RSI eller Close mangler i datasettet.")
 
 
