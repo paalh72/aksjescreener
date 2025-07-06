@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import datetime
 import altair as alt
 
 # RSI-beregning
@@ -55,7 +54,7 @@ def screen_ticker(ticker, min_vol, min_swings, min_return_pct):
         st.warning(f"Feil i {ticker}: {e}")
         return None
 
-# ----------------- Streamlit UI ------------------
+# --- Streamlit app ---
 
 st.set_page_config(page_title="Aksjescreener", layout="wide")
 st.title("📈 RSI-baserte aksjesvingninger – Screener")
@@ -69,7 +68,6 @@ else:
     st.success(f"✅ Lastet ned {len(test_df)} rader for {test_ticker}")
     st.dataframe(test_df.tail())
 
-# Sidebar filterinnstillinger
 st.sidebar.header("🔧 Filterinnstillinger")
 min_vol = st.sidebar.number_input("Minimum gj.snittlig volum", value=50000)
 min_swings = st.sidebar.number_input("Min. antall svingmønstre", value=1)
@@ -87,7 +85,7 @@ with st.spinner("Analyserer aksjer, vennligst vent..."):
     for i, t in enumerate([s.strip().upper() for s in stocks if s.strip()]):
         st.write(f"▶️ Sjekker {t} ({i+1}/{len(stocks)})")
         res = screen_ticker(t, min_vol, min_swings, min_return_pct)
-        if res:  # Fjernet success_rate-filter for debugging
+        if res and res["success_rate"] >= min_success_rate:
             results.append(res)
 
 # Vis resultater
@@ -99,68 +97,50 @@ if results:
 else:
     st.info("Ingen aksjer matchet kriteriene dine.")
 
-# ----------------- Manuell testing ------------------
-
+# Manuell testing av enkeltaksje
 st.subheader("🔬 Test enkeltaksje")
 ticker_input = st.text_input("🎯 Test ticker manuelt", "AAPL")
-
 if st.button("Test ticker"):
     df = yf.download(ticker_input, period="5y", interval="1d", auto_adjust=True)
     if df.empty:
         st.error("Ingen data funnet.")
     else:
         df['RSI'] = compute_rsi(df['Close'])
-        chart_df = df[['Close', 'RSI']].dropna()
-        chart_df.index = pd.to_datetime(chart_df.index)
+        if 'RSI' in df.columns and 'Close' in df.columns:
+            chart_df = df[['Close', 'RSI']].dropna()
+            if not chart_df.empty:
+                chart_df_reset = chart_df.reset_index()
 
-        if chart_df.empty:
-            st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
+                st.write("Kolonner etter reset_index:", list(chart_df_reset.columns))
+
+                if 'Date' not in chart_df_reset.columns:
+                    old_name = chart_df_reset.columns[0]
+                    chart_df_reset.rename(columns={old_name: 'Date'}, inplace=True)
+                    st.write(f"Renamet kolonne '{old_name}' til 'Date'")
+
+                missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
+                if missing_cols:
+                    st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
+                else:
+                    chart_df_melted = chart_df_reset.melt(
+                        id_vars='Date',
+                        value_vars=['Close', 'RSI'],
+                        var_name='Type',
+                        value_name='Value'
+                    )
+
+                    chart = alt.Chart(chart_df_melted).mark_line().encode(
+                        x='Date:T',
+                        y='Value:Q',
+                        color='Type:N'
+                    ).properties(
+                        width=800,
+                        height=400,
+                        title=f"{ticker_input.upper()} – Close & RSI"
+                    ).interactive()
+
+                    st.altair_chart(chart, use_container_width=True)
+            else:
+                st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
         else:
-            st.success("✅ Viser graf for 'Close' og 'RSI'")
-
-            # To separate grafer
-            st.line_chart(chart_df['Close'], height=200)
-            st.line_chart(chart_df['RSI'], height=200)
-
-            # Kombinert interaktiv graf (Altair)
-
-            chart_df_reset = chart_df.reset_index()
-            st.write("Kolonner før rename:", list(chart_df_reset.columns))
-
-            # Rename første kolonne til 'Date' hvis nødvendig
-            chart_df_reset = chart_df.reset_index()
-
-# Sjekk kolonnenavn etter reset_index
-st.write("Kolonner etter reset_index:", list(chart_df_reset.columns))
-
-# Sørg for at 'Date' eksisterer, hvis ikke sett navnet til index-kolonnen
-if 'Date' not in chart_df_reset.columns:
-    # Den første kolonnen er som regel datoen etter reset_index
-    old_name = chart_df_reset.columns[0]
-    chart_df_reset.rename(columns={old_name: 'Date'}, inplace=True)
-    st.write(f"Renamet kolonne '{old_name}' til 'Date'")
-
-# Sjekk om 'Close' og 'RSI' finnes
-missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
-if missing_cols:
-    st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
-else:
-    # Nå kan vi trygt gjøre melt
-    chart_df_melted = chart_df_reset.melt(
-        id_vars='Date',
-        value_vars=['Close', 'RSI'],
-        var_name='Type',
-        value_name='Value'
-    )
-
-    chart = alt.Chart(chart_df_melted).mark_line().encode(
-        x='Date:T',
-        y='Value:Q',
-        color='Type:N'
-    ).properties(
-        width=800,
-        height=400,
-        title=f"{ticker_input.upper()} – Close & RSI"
-    ).interactive()
-
-    st.altair_chart(chart, use_container_width=True)
+            st.warning("⚠️ RSI eller Close mangler i datasettet.")
