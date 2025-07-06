@@ -2,118 +2,121 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import numpy as np
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
+import datetime
+from ta.momentum import RSIIndicator
 
-st.set_page_config(page_title="Aksjescreener", layout="wide")
+try:
+    from stqdm import stqdm
+except ImportError:
+    stqdm = lambda x, **kwargs: x  # fallback hvis stqdm ikke er installert
 
+# --- HENT TICKERS ---
 @st.cache_data
-def hent_tickers(url, sep):
-    df = pd.read_csv(url, sep=sep)
-    if 'Symbol' not in df.columns:
-        st.error(f"Symbol-kolonne ikke funnet i filen: {url}")
-        return []
-    return df['Symbol'].dropna().unique().tolist()
-
-@st.cache_data
-def hent_data(ticker, periode_aar=5):
-    slutt = datetime.today()
-    start = slutt - timedelta(days=periode_aar * 365)
-    try:
-        df = yf.download(ticker, start=start, end=slutt, progress=False)
-        if df.empty:
-            return None
-        df['RSI'] = beregn_rsi(df['Close'])
-        df.dropna(inplace=True)
-        return df
-    except Exception as e:
-        print(f"Feil i {ticker}: {e}")
-        return None
-
-def beregn_rsi(priser, periode=14):
-    delta = priser.diff()
-    gevinst = delta.clip(lower=0)
-    tap = -delta.clip(upper=0)
-    gj_snitt_gevinst = gevinst.rolling(window=periode).mean()
-    gj_snitt_tap = tap.rolling(window=periode).mean()
-    rs = gj_snitt_gevinst / gj_snitt_tap
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def analyser_rsi(df, prosentgrense, min_økninger):
-    lav_rsi = df[df['RSI'] < 20]
-    hoy_rsi = df[df['RSI'] > 70]
-    telling = 0
-    suksesser = 0
-
-    for i in range(len(lav_rsi)):
-        start_dato = lav_rsi.index[i]
-        neste_hoy = hoy_rsi[hoy_rsi.index > start_dato]
-        if not neste_hoy.empty:
-            slutt_dato = neste_hoy.index[0]
-            pris_start = df.loc[start_dato]['Close']
-            pris_slutt = df.loc[slutt_dato]['Close']
-            endring = (pris_slutt - pris_start) / pris_start * 100
-            telling += 1
-            if endring >= prosentgrense:
-                suksesser += 1
-
-    if telling >= min_økninger:
-        return suksesser, telling
+def hent_tickers(url):
+    df = pd.read_csv(url, sep=None, engine="python")
+    kolonner = df.columns.str.lower()
+    if "symbol" in kolonner:
+        symbol_col = df.columns[kolonner.get_loc("symbol")]
+        return df[symbol_col].dropna().unique().tolist()
     else:
-        return None
-
-st.title("📈 Aksjescreener med RSI-analyse")
+        return []
 
 url_oslo = "https://raw.githubusercontent.com/paalh72/aksjescreener/main/oslo_bors_tickers.csv"
 url_nyse = "https://raw.githubusercontent.com/paalh72/aksjescreener/main/nyse_tickers.csv"
 
-volumgrense = st.number_input("Minimum gjennomsnittlig volum", min_value=0, value=100_000)
-prosentgrense = st.number_input("Minimum prosentøkning mellom RSI 20 og 70", min_value=1, value=10)
-min_økninger = st.number_input("Minimum antall RSI-sykluser (20->70)", min_value=1, value=10)
-
-st.markdown("---")
-
-st.write("⏳ Laster tickere fra Oslo Børs og NYSE...")
-tickers_oslo = hent_tickers(url_oslo, sep=';')
-tickers_nyse = hent_tickers(url_nyse, sep=',')
+tickers_oslo = hent_tickers(url_oslo)
+tickers_nyse = hent_tickers(url_nyse)
 alle_tickers = tickers_oslo + tickers_nyse
 
+# --- PARAMETERE FRA BRUKER ---
+st.title("📈 Aksjescreener basert på RSI og kursutvikling")
+
+min_volum = st.number_input("Minimum snittvolum (aksjer per dag)", value=100000)
+rsi_grense = st.slider("RSI-grenser (lav/høy)", 10, 90, (20, 70))
+prisendring_prosent = st.number_input("Minimum kursendring mellom RSI 20 og 70 (%)", value=10)
+min_treff = st.number_input("Minimum andel tilfeller med positiv utvikling (%)", value=50)
+
+# --- HENT DATA ---
+def hent_data(ticker):
+    try:
+        df = yf.download(ticker, period="5y", interval="1d", progress=False)
+        if df.empty:
+            return None
+        df = df.dropna(subset=["Close", "Volume"])
+        df["RSI"] = RSIIndicator(close=df["Close"], window=14).rsi()
+        df = df.dropna(subset=["RSI"])
+        return df
+    except Exception:
+        return None
+
+# --- ANALYSER AKSJE ---
+def analyser_aksje(df, rsi_bounds, min_change, min_pct_ok):
+    low, high = rsi_bounds
+    df = df.copy()
+    df["Signal"] = None
+
+    # Finn RSI lav og høy punkter
+    signaler = []
+    i = 0
+    while i < len(df) - 1:
+        if df["RSI"].iloc[i] <= low:
+            for j in range(i+1, len(df)):
+                if df["RSI"].iloc[j] >= high:
+                    pris_start = df["Close"].iloc[i]
+                    pris_slutt = df["Close"].iloc[j]
+                    endring = (pris_slutt - pris_start) / pris_start * 100
+                    signaler.append(endring)
+                    i = j
+                    break
+            else:
+                break
+        i += 1
+
+    if len(signaler) == 0:
+        return None
+
+    antall = len(signaler)
+    antall_ok = sum(1 for x in signaler if x >= min_change)
+    prosent_ok = round(antall_ok / antall * 100, 2)
+
+    if prosent_ok >= min_pct_ok:
+        return {
+            "Ticker": df.name if hasattr(df, "name") else "",
+            "Antall tilfeller": antall,
+            "Positiv andel (%)": prosent_ok
+        }
+    return None
+
+# --- KJØR SCREENER ---
 resultater = []
 
-for ticker in alle_tickers:
-    df = hent_data(ticker)
-    if df is None or df.empty or 'Volume' not in df.columns:
-        continue
-    df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
-    df = df.dropna(subset=['Volume'])
-    if df['Volume'].mean() < volumgrense:
-        continue
+for ticker in stqdm(alle_tickers, desc="Behandler tickere"):
+    try:
+        df = hent_data(ticker)
+        if (
+            df is None
+            or "Volume" not in df.columns
+            or df["Volume"].dropna().empty
+            or df["Volume"].dropna().mean() < min_volum
+        ):
+            continue
 
-    analyse = analyser_rsi(df, prosentgrense, min_økninger)
-    if analyse:
-        suksesser, totalt = analyse
-        prosent = suksesser / totalt * 100
-        resultater.append((ticker, suksesser, totalt, prosent))
+        df.name = ticker  # for visning i resultat
+        resultat = analyser_aksje(df, rsi_grense, prisendring_prosent, min_treff)
+        if resultat:
+            resultater.append(resultat)
 
+    except Exception as e:
+        st.warning(f"Feil i {ticker}: {e}")
+
+# --- VIS RESULTAT ---
 if resultater:
-    resultater.sort(key=lambda x: x[3], reverse=True)
-    df_resultat = pd.DataFrame(resultater, columns=["Ticker", "Suksesser", "Totalt", "Treffsikkerhet (%)"])
-    st.subheader("📋 Aksjer som matcher kriteriene:")
-    valgt_rad = st.dataframe(df_resultat, use_container_width=True)
+    df_resultat = pd.DataFrame(resultater).sort_values("Positiv andel (%)", ascending=False)
+    valgt = st.selectbox("Velg aksje for å se graf", df_resultat["Ticker"])
+    st.dataframe(df_resultat, use_container_width=True)
 
-    valgt_ticker = st.selectbox("Velg en aksje for å vise graf:", df_resultat["Ticker"])
-    if valgt_ticker:
-        df_plot = hent_data(valgt_ticker)
-        fig, ax1 = plt.subplots(figsize=(12, 6))
-        ax1.plot(df_plot.index, df_plot['Close'], label='Close', color='blue')
-        ax2 = ax1.twinx()
-        ax2.plot(df_plot.index, df_plot['RSI'], label='RSI', color='orange')
-        ax1.set_title(f"Kurs og RSI for {valgt_ticker}")
-        ax1.set_ylabel("Kurs")
-        ax2.set_ylabel("RSI")
-        ax1.legend(loc='upper left')
-        ax2.legend(loc='upper right')
-        st.pyplot(fig)
+    if valgt:
+        df_valgt = hent_data(valgt)
+        st.line_chart(df_valgt[["Close", "RSI"]])
 else:
-    st.warning("Ingen aksjer matchet kriteriene dine.")
+    st.info("Ingen aksjer matchet kriteriene.")
