@@ -54,8 +54,7 @@ def screen_ticker(ticker, min_vol, min_swings, min_return_pct):
         st.warning(f"Feil i {ticker}: {e}")
         return None
 
-# --- Streamlit app ---
-
+# --- Streamlit UI setup ---
 st.set_page_config(page_title="Aksjescreener", layout="wide")
 st.title("📈 RSI-baserte aksjesvingninger – Screener")
 
@@ -68,6 +67,7 @@ else:
     st.success(f"✅ Lastet ned {len(test_df)} rader for {test_ticker}")
     st.dataframe(test_df.tail())
 
+# Sidebar filter
 st.sidebar.header("🔧 Filterinnstillinger")
 min_vol = st.sidebar.number_input("Minimum gj.snittlig volum", value=50000)
 min_swings = st.sidebar.number_input("Min. antall svingmønstre", value=1)
@@ -85,8 +85,10 @@ with st.spinner("Analyserer aksjer, vennligst vent..."):
     for i, t in enumerate([s.strip().upper() for s in stocks if s.strip()]):
         st.write(f"▶️ Sjekker {t} ({i+1}/{len(stocks)})")
         res = screen_ticker(t, min_vol, min_swings, min_return_pct)
-        if res and res["success_rate"] >= min_success_rate:
-            results.append(res)
+        if res:
+            # Her kan du legge inn filter på success_rate hvis ønskelig
+            if res['success_rate'] >= min_success_rate:
+                results.append(res)
 
 # Vis resultater
 st.subheader("📊 Resultater")
@@ -97,7 +99,7 @@ if results:
 else:
     st.info("Ingen aksjer matchet kriteriene dine.")
 
-# Manuell testing av enkeltaksje
+# Manuell test og plotting av ticker
 st.subheader("🔬 Test enkeltaksje")
 ticker_input = st.text_input("🎯 Test ticker manuelt", "AAPL")
 if st.button("Test ticker"):
@@ -105,23 +107,31 @@ if st.button("Test ticker"):
     if df.empty:
         st.error("Ingen data funnet.")
     else:
-        df['RSI'] = compute_rsi(df['Close'])
-        if 'RSI' in df.columns and 'Close' in df.columns:
-            chart_df = df[['Close', 'RSI']].dropna()
+        # Flatten MultiIndex kolonner hvis nødvendig
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = ['_'.join(filter(None, map(str, col))).strip() for col in df.columns.values]
+            st.write("Flattened kolonner:", df.columns.tolist())
+
+        # Finn riktig Close-kolonne
+        close_cols = [col for col in df.columns if col.lower().startswith('close')]
+        if not close_cols:
+            st.error("Fant ikke 'Close'-kolonne i data.")
+        else:
+            close_col = close_cols[0]
+            df['RSI'] = compute_rsi(df[close_col])
+
+            chart_df = df[[close_col, 'RSI']].dropna()
+            chart_df = chart_df.rename(columns={close_col: 'Close'})
+
             if not chart_df.empty:
                 chart_df_reset = chart_df.reset_index()
 
-                st.write("Kolonner etter reset_index:", list(chart_df_reset.columns))
-
+                # Sørg for at dato-kolonnen heter 'Date'
                 if 'Date' not in chart_df_reset.columns:
-                    old_name = chart_df_reset.columns[0]
-                    chart_df_reset.rename(columns={old_name: 'Date'}, inplace=True)
-                    st.write(f"Renamet kolonne '{old_name}' til 'Date'")
+                    date_col = chart_df_reset.columns[0]
+                    chart_df_reset.rename(columns={date_col: 'Date'}, inplace=True)
 
-                missing_cols = [col for col in ['Close', 'RSI'] if col not in chart_df_reset.columns]
-                if missing_cols:
-                    st.error(f"Følgende nødvendige kolonner mangler i data: {missing_cols}")
-                else:
+                try:
                     chart_df_melted = chart_df_reset.melt(
                         id_vars='Date',
                         value_vars=['Close', 'RSI'],
@@ -140,7 +150,9 @@ if st.button("Test ticker"):
                     ).interactive()
 
                     st.altair_chart(chart, use_container_width=True)
+                except KeyError as e:
+                    st.error(f"Feil i melt-funksjonen: {e}")
+                    st.write(chart_df_reset.head())
             else:
                 st.warning("⚠️ Ingen data å vise i grafen (etter dropp av NA).")
-        else:
-            st.warning("⚠️ RSI eller Close mangler i datasettet.")
+
