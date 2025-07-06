@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import datetime
+from stqdm import stqdm 
 
 st.set_page_config(page_title="Aksjescreener", layout="wide")
 st.title("🔍 Aksjescreener – NYSE og Oslo Børs")
